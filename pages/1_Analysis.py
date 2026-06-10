@@ -89,7 +89,7 @@ def _render_card(key_label, emoji, color, wide, fmt, data):
 
 
 def _estimate_account_value(user, summary: dict, lang: str) -> str:
-    base = user.follower_count * 0.23 + summary.get("avg_likes", 0) * 0.3
+    base = user.follower_count * (user.follower_count ** 0.5) * 0.005 + summary.get("avg_likes", 0) * 10
     symbol = "¥" if lang == "zh" else "$"
     return f"{symbol}{base:,.0f}"
 
