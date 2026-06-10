@@ -281,34 +281,78 @@ def _extract_posts_from_dom(page) -> list[dict]:
 
 
 def _extract_user_from_json(page) -> dict:
-    """从嵌入的 JSON script 中提取粉丝数和帖子数 (比 meta tag 更可靠)。"""
+    """从嵌入的 JSON script 中提取粉丝数和帖子数。
+
+    搜索所有 JSON script 块，查找含 follower_count 的用户对象。
+    """
     return page.evaluate("""
 () => {
+    const parseCount = (s) => {
+        s = s.trim().toUpperCase();
+        s = s.replace(/(\\d+(?:\\.\\d+)?)\\s+([KMW万亿])/g, '$1$2');
+        const m = s.match(/^(\\d+(?:\\.\\d+)?)\\s*([KMW万亿]?)/);
+        if (!m) return 0;
+        const num = parseFloat(m[1]);
+        const unit = m[2];
+        const mult = {K:1000, M:1000000, W:10000, '万':10000, '亿':100000000};
+        return Math.round(num * (mult[unit] || 1));
+    };
+
+    // Search ALL JSON scripts for user data
     const scripts = document.querySelectorAll('script[type="application/json"]');
     for (const script of scripts) {
-        const text = script.textContent;
-        if (!text.includes('BarcelonaProfileThreadsTabDirectQueryRelayPreloader')) continue;
         try {
-            const parsed = JSON.parse(text);
-            const outer = parsed && parsed.require;
-            if (!outer || !outer[0] || !outer[0][3]) continue;
-            const outerBbox = outer[0][3][0];
-            if (!outerBbox || !outerBbox.__bbox) continue;
-            const inner = outerBbox.__bbox.require;
-            if (!inner || !inner[0] || !inner[0][3]) continue;
-            const innerBbox = inner[0][3][1];
-            if (!innerBbox || !innerBbox.__bbox) continue;
-            const resultData = innerBbox.__bbox.result;
-            if (!resultData || !resultData.data) continue;
-            const user = resultData.data.user;
-            if (!user) continue;
-            return {
-                follower_count: user.follower_count ?? user.followerCount ?? 0,
-                following_count: user.following_count ?? user.followingCount ?? 0,
-                post_count: user.media_count ?? user.post_count ?? user.postCount ?? 0,
+            const parsed = JSON.parse(script.textContent);
+            // Deep search for objects with follower_count
+            const search = (obj, depth) => {
+                if (depth > 6 || !obj || typeof obj !== 'object') return null;
+                // Check if this object looks like a user with stats
+                if (obj.follower_count != null && (obj.media_count != null || obj.post_count != null)) {
+                    return {
+                        follower_count: obj.follower_count ?? 0,
+                        post_count: obj.media_count ?? obj.post_count ?? obj.postCount ?? 0,
+                    };
+                }
+                // Check with camelCase keys
+                if (obj.followerCount != null && (obj.mediaCount != null || obj.postCount != null)) {
+                    return {
+                        follower_count: obj.followerCount ?? 0,
+                        post_count: obj.mediaCount ?? obj.postCount ?? 0,
+                    };
+                }
+                // Recurse into arrays and objects
+                if (Array.isArray(obj)) {
+                    for (const item of obj) {
+                        const r = search(item, depth + 1);
+                        if (r) return r;
+                    }
+                } else {
+                    for (const key of Object.keys(obj)) {
+                        const val = obj[key];
+                        if (val && typeof val === 'object') {
+                            const r = search(val, depth + 1);
+                            if (r) return r;
+                        }
+                    }
+                }
+                return null;
             };
+            const result = search(parsed, 0);
+            if (result) return result;
         } catch(e) {}
     }
+
+    // Fallback: extract from page visible text
+    const bodyText = document.body.innerText;
+    let followerCount = 0, postCount = 0;
+    const fMatch = bodyText.match(/(\\d+(?:\\.\\d+)?)\\s*([KkMm万亿]?)\\s*(?:位?粉丝|follower)s?/i);
+    if (fMatch) followerCount = parseCount(fMatch[1] + (fMatch[2] || ''));
+    const pMatch = bodyText.match(/(\\d+(?:\\.\\d+)?)\\s*([KkMm万亿]?)\\s*(?:条?串文|post|thread)s?/i);
+    if (pMatch) postCount = parseCount(pMatch[1] + (pMatch[2] || ''));
+    if (followerCount || postCount) {
+        return { follower_count: followerCount, following_count: 0, post_count: postCount };
+    }
+
     return null;
 }
 """)
@@ -412,6 +456,22 @@ def fetch_data(username: str) -> tuple[dict, list[dict]]:
             follower_count = json_user["follower_count"]
         if json_user.get("post_count"):
             post_count = json_user["post_count"]
+
+    # Try GraphQL responses for user stats
+    if not follower_count or not post_count:
+        for gql in graphql_responses:
+            try:
+                ud = gql.get("data", {}).get("user", {}) or gql.get("data", {}).get("data", {}).get("user", {})
+                fc = ud.get("follower_count") or ud.get("followerCount")
+                pc = ud.get("media_count") or ud.get("post_count") or ud.get("postCount")
+                if fc and not follower_count:
+                    follower_count = fc
+                if pc and not post_count:
+                    post_count = pc
+                if follower_count and post_count:
+                    break
+            except Exception:
+                pass
 
     user_data = {
         "username": extracted_username,
