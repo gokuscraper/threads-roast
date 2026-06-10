@@ -129,6 +129,13 @@ if st.session_state.get("scraped_user") is not None:
     st.success(
         f"✅ {display} — {len(posts)} 条帖子"
     )
+
+    # Debug: show raw og:description
+    _debug_raw = user.raw.get("_debug", "") if hasattr(user, "raw") else ""
+    if _debug_raw:
+        with st.expander("🔍 调试: 原始 og:description"):
+            st.code(_debug_raw, language="text")
+
     if st.button(_("goto_analysis"), type="primary", use_container_width=True):
         st.switch_page("pages/1_Analysis.py")
 

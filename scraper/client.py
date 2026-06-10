@@ -3,8 +3,6 @@ import atexit
 import json
 import re
 import sys
-import threading
-import time
 
 if sys.platform == "win32":
     try:
@@ -15,6 +13,7 @@ if sys.platform == "win32":
 from cloakbrowser import launch
 
 from scraper.config import BASE_URL, HEADLESS, VIEWPORT, PAGE_LOAD_TIMEOUT, USER_AGENT
+import threading
 
 _browser = None
 _context = None
@@ -98,42 +97,30 @@ def _parse_og_description(desc: str) -> tuple[str, int, int, int]:
     post_count = 0
     biography = desc
     if not desc:
-        print("[DEBUG] og:description is empty")
         return biography, follower_count, following_count, post_count
 
-    print(f"[DEBUG] Raw og:description: {repr(desc)}")
-
     parts = re.split(r'\s*[•·]\s*', desc, maxsplit=4)
-    print(f"[DEBUG] Split parts ({len(parts)}): {parts}")
 
     if len(parts) >= 2:
         m = re.search(r'(\d+(?:\.\d+)?)\s*([KkMm万亿]?)\s*(?:位?粉丝|follower)s?', parts[0])
-        print(f"[DEBUG] parts[0] follower regex: {parts[0]!r} -> match={m is not None}")
         if m:
             follower_count = _parse_count(m.group(1) + m.group(2))
-            print(f"[DEBUG] follower_count from meta: {follower_count}")
         if len(parts) >= 2:
             m = re.search(r'(\d+(?:\.\d+)?)\s*([KkMm万亿]?)\s*(?:条?串文|post)s?', parts[1])
-            print(f"[DEBUG] parts[1] post regex: {parts[1]!r} -> match={m is not None}")
             if m:
                 post_count = _parse_count(m.group(1) + m.group(2))
-                print(f"[DEBUG] post_count from meta: {post_count}")
         if len(parts) >= 3:
             biography = " • ".join(parts[2:])
         else:
             biography = parts[0]
     else:
         m = re.search(r'(\d+(?:\.\d+)?)\s*([KkMm万亿]?)\s*follower', parts[0], re.IGNORECASE)
-        print(f"[DEBUG] single part follower regex: {parts[0]!r} -> match={m is not None}")
         if m:
             follower_count = _parse_count(m.group(1) + m.group(2))
-            print(f"[DEBUG] follower_count from meta (single): {follower_count}")
 
     biography = re.sub(
         r'[。，]\s*查看\s*@\S+\s*参与的最新对话[\s。，]*$', '', biography
     ).strip()
-    print(f"[DEBUG] Final biography: {biography!r}")
-    print(f"[DEBUG] Final counts: follower={follower_count}, post={post_count}")
     return biography.strip(), follower_count, following_count, post_count
 
 
@@ -384,6 +371,7 @@ def fetch_data(username: str) -> tuple[dict, list[dict]]:
         "following_count": following_count,
         "post_count": post_count,
         "verified": False,
+        "_debug": meta_info.get("ogDescription", ""),
     }
 
     # --- Extract posts ---
