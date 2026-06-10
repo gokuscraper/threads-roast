@@ -102,12 +102,17 @@ def _parse_og_description(desc: str) -> tuple[str, int, int, int]:
 
     parts = re.split(r'\s*[•·]\s*', desc, maxsplit=4)
     if len(parts) >= 2:
-        m = re.search(r'(\d+(?:\.\d+)?)\s*([KkMm万亿]?)\s*(?:位?粉丝|follower)s?', parts[0])
-        if m:
-            follower_count = _parse_count(m.group(1) + m.group(2))
-        if len(parts) >= 2:
-            m = re.search(r'(\d+(?:\.\d+)?)\s*([KkMm万亿]?)\s*(?:条?串文|post)s?', parts[1])
-            if m:
+        # Search across ALL parts, not just fixed indices — mobile format may differ
+        for part in parts:
+            m = re.search(
+                r'(\d+(?:\.\d+)?)\s*([KkMm万亿]?)\s*(?:位?粉丝|follower)s?', part
+            )
+            if m and not follower_count:
+                follower_count = _parse_count(m.group(1) + m.group(2))
+            m = re.search(
+                r'(\d+(?:\.\d+)?)\s*([KkMm万亿]?)\s*(?:条?串文|post|thread)s?', part
+            )
+            if m and not post_count:
                 post_count = _parse_count(m.group(1) + m.group(2))
         if len(parts) >= 3:
             biography = " • ".join(parts[2:])
@@ -118,8 +123,12 @@ def _parse_og_description(desc: str) -> tuple[str, int, int, int]:
         if m:
             follower_count = _parse_count(m.group(1) + m.group(2))
 
+    # Clean up Threads boilerplate (Chinese and English)
     biography = re.sub(
         r'[。，]\s*查看\s*@\S+\s*参与的最新对话[\s。，]*$', '', biography
+    ).strip()
+    biography = re.sub(
+        r'[.。]?\s*See the latest conversations with @\S+\s*$', '', biography
     ).strip()
     return biography.strip(), follower_count, following_count, post_count
 
@@ -271,6 +280,40 @@ def _extract_posts_from_dom(page) -> list[dict]:
     return page.evaluate(js_code) or []
 
 
+def _extract_user_from_json(page) -> dict:
+    """从嵌入的 JSON script 中提取粉丝数和帖子数 (比 meta tag 更可靠)。"""
+    return page.evaluate("""
+() => {
+    const scripts = document.querySelectorAll('script[type="application/json"]');
+    for (const script of scripts) {
+        const text = script.textContent;
+        if (!text.includes('BarcelonaProfileThreadsTabDirectQueryRelayPreloader')) continue;
+        try {
+            const parsed = JSON.parse(text);
+            const outer = parsed && parsed.require;
+            if (!outer || !outer[0] || !outer[0][3]) continue;
+            const outerBbox = outer[0][3][0];
+            if (!outerBbox || !outerBbox.__bbox) continue;
+            const inner = outerBbox.__bbox.require;
+            if (!inner || !inner[0] || !inner[0][3]) continue;
+            const innerBbox = inner[0][3][1];
+            if (!innerBbox || !innerBbox.__bbox) continue;
+            const resultData = innerBbox.__bbox.result;
+            if (!resultData || !resultData.data) continue;
+            const user = resultData.data.user;
+            if (!user) continue;
+            return {
+                follower_count: user.follower_count ?? user.followerCount ?? 0,
+                following_count: user.following_count ?? user.followingCount ?? 0,
+                post_count: user.media_count ?? user.post_count ?? user.postCount ?? 0,
+            };
+        } catch(e) {}
+    }
+    return null;
+}
+""")
+
+
 def _merge_posts(existing, new_posts, seen_ids):
     """合并新帖子到已有列表，去重。
 
@@ -361,6 +404,14 @@ def fetch_data(username: str) -> tuple[dict, list[dict]]:
     biography, follower_count, following_count, post_count = _parse_og_description(
         meta_info.get("ogDescription", "")
     )
+
+    # Try to get more accurate counts from embedded JSON as fallback
+    json_user = _extract_user_from_json(page)
+    if json_user:
+        if json_user.get("follower_count"):
+            follower_count = json_user["follower_count"]
+        if json_user.get("post_count"):
+            post_count = json_user["post_count"]
 
     user_data = {
         "username": extracted_username,
