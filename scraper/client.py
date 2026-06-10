@@ -102,11 +102,11 @@ def _parse_og_description(desc: str) -> tuple[str, int, int, int]:
     parts = re.split(r'\s*[•·]\s*', desc, maxsplit=4)
 
     if len(parts) >= 2:
-        m = re.search(r'(\d+(?:\.\d+)?)\s*([KkMm万亿]?)\s*(?:位?粉丝|follower)s?', parts[0])
+        m = re.search(r'(\d+(?:\.\d+)?)\s*([KkMm万亿]?)\s*(?:位?粉丝|follower)s?', parts[0], re.IGNORECASE)
         if m:
             follower_count = _parse_count(m.group(1) + m.group(2))
         if len(parts) >= 2:
-            m = re.search(r'(\d+(?:\.\d+)?)\s*([KkMm万亿]?)\s*(?:条?串文|post)s?', parts[1])
+            m = re.search(r'(\d+(?:\.\d+)?)\s*([KkMm万亿]?)\s*(?:条?串文|post|thread)s?', parts[1], re.IGNORECASE)
             if m:
                 post_count = _parse_count(m.group(1) + m.group(2))
         if len(parts) >= 3:
@@ -118,8 +118,12 @@ def _parse_og_description(desc: str) -> tuple[str, int, int, int]:
         if m:
             follower_count = _parse_count(m.group(1) + m.group(2))
 
+    # Clean up Threads boilerplate (Chinese and English)
     biography = re.sub(
         r'[。，]\s*查看\s*@\S+\s*参与的最新对话[\s。，]*$', '', biography
+    ).strip()
+    biography = re.sub(
+        r'[.。]?\s*See the latest conversations with @\S+\s*$', '', biography
     ).strip()
     return biography.strip(), follower_count, following_count, post_count
 
