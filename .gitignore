@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.streamlit/secrets.toml
+data/
+node_modules/
+.idea/
+
+# Project planning
+计划.md
+
+# Old Twitter/X assets (replaced)
+xpose-logo.jpg
+github-logo.png
+.devcontainer/
+.github/
